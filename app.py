@@ -32,7 +32,7 @@ def load_font(size):
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "C:/Windows/Fonts/arialbd.ttf",
-        "C:/Windows/Fonts/impact.ttf",
+        "C:/Windows/Fonts/calibrib.ttf",
     ]
     for path in candidate_paths:
         if os.path.exists(path):
@@ -43,111 +43,71 @@ def load_font(size):
     return ImageFont.load_default()
 
 
-def generate_bokeh_3d_captcha(code_text, width=320, height=130):
-    """Generate a dark glossy bokeh scene with clear 3D-style numbers and reflection."""
-    # 1. Dark atmospheric gradient background
-    bg = Image.new("RGB", (width, height), (8, 15, 28))
-    draw_bg = ImageDraw.Draw(bg)
+def generate_black_white_captcha(code_text, width=300, height=110):
+    """Generate a clean black background with crisp white 4-digit text."""
+    # Pure black background
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+    draw = ImageDraw.Draw(image)
 
-    palette_choices = [
-        ((7, 15, 28), (16, 36, 58)),
-        ((10, 14, 26), (22, 42, 64)),
-        ((8, 18, 30), (14, 46, 62)),
-    ]
-    top_col, mid_col = random.choice(palette_choices)
-    floor_y = int(height * 0.76)
+    # Subtle dark-gray decorative lines and dots (low contrast so text stays crystal clear)
+    for _ in range(random.randint(3, 6)):
+        x1 = random.randint(0, width - 1)
+        y1 = random.randint(0, height - 1)
+        x2 = random.randint(0, width - 1)
+        y2 = random.randint(0, height - 1)
+        shade = random.randint(25, 55)
+        draw.line([(x1, y1), (x2, y2)], fill=(shade, shade, shade, 255), width=1)
 
-    for y in range(floor_y):
-        ratio = y / max(floor_y - 1, 1)
-        r = int(top_col[0] * (1 - ratio) + mid_col[0] * ratio)
-        g = int(top_col[1] * (1 - ratio) + mid_col[1] * ratio)
-        b = int(top_col[2] * (1 - ratio) + mid_col[2] * ratio)
-        draw_bg.line([(0, y), (width, y)], fill=(r, g, b))
+    for _ in range(random.randint(20, 40)):
+        dx = random.randint(0, width - 1)
+        dy = random.randint(0, height - 1)
+        shade = random.randint(35, 75)
+        draw.point((dx, dy), fill=(shade, shade, shade, 255))
 
-    # 2. Glowing bokeh circles in the background (blurred for depth)
-    bokeh_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw_bokeh = ImageDraw.Draw(bokeh_layer)
-    bokeh_colors = [
-        (56, 189, 248, 135),   # Cyan glow
-        (251, 191, 36, 125),   # Warm gold glow
-        (147, 197, 253, 110),  # Soft blue glow
-        (253, 224, 71, 95),    # Light amber glow
-    ]
+    # Draw clear white digits with slight tilt and spacing
+    font = load_font(56)
+    char_boxes = []
+    spacing = 12
 
-    for _ in range(random.randint(14, 22)):
-        bx = random.randint(0, width)
-        by = random.randint(6, floor_y - 4)
-        rad = random.randint(5, 16)
-        col = random.choice(bokeh_colors)
-        draw_bokeh.ellipse([bx - rad, by - rad, bx + rad, by + rad], fill=col)
-
-    bokeh_blurred = bokeh_layer.filter(ImageFilter.GaussianBlur(radius=4.5))
-    bg_rgba = bg.convert("RGBA")
-    scene = Image.alpha_composite(bg_rgba, bokeh_blurred)
-
-    # 3. Glossy dark reflective floor
-    draw_scene = ImageDraw.Draw(scene)
-    for y in range(floor_y, height):
-        ratio = (y - floor_y) / max(height - floor_y - 1, 1)
-        r = int(14 * (1 - ratio) + 5 * ratio)
-        g = int(24 * (1 - ratio) + 9 * ratio)
-        b = int(38 * (1 - ratio) + 16 * ratio)
-        draw_scene.line([(0, y), (width, y)], fill=(r, g, b, 255))
-
-    # Subtle floor horizon and perspective grid lines
-    draw_scene.line([(0, floor_y), (width, floor_y)], fill=(70, 110, 150, 90), width=1)
-    draw_scene.line([(0, int(height * 0.90)), (width, int(height * 0.87))], fill=(55, 85, 120, 75), width=1)
-
-    # 4. Render 3D-extruded crisp digits on a transparent layer
-    font = load_font(62)
-    text_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw_text = ImageDraw.Draw(text_layer)
-
-    # Calculate total width to center the 4 digits cleanly
-    spacing = 6
-    char_widths = []
     for ch in code_text:
-        bbox = draw_text.textbbox((0, 0), ch, font=font)
-        char_widths.append(bbox[2] - bbox[0])
+        bbox = draw.textbbox((0, 0), ch, font=font)
+        cw = bbox[2] - bbox[0]
+        ch_h = bbox[3] - bbox[1]
+        char_boxes.append((ch, cw, ch_h))
 
-    total_w = sum(char_widths) + spacing * (len(code_text) - 1)
-    start_x = max(16, (width - total_w) // 2)
-    base_y = int(floor_y - 64)
+    total_width = sum(item[1] for item in char_boxes) + spacing * (len(char_boxes) - 1)
+    cursor_x = max(12, (width - total_width) // 2)
+    center_y = height // 2
 
-    curr_x = start_x
-    for idx, ch in enumerate(code_text):
-        # Slight vertical/horizontal variation so bots cannot use fixed pixel masks
-        ox = curr_x + random.randint(-2, 2)
-        oy = base_y + random.randint(-3, 2)
+    for ch, cw, ch_h in char_boxes:
+        layer_w = max(64, cw + 28)
+        layer_h = max(72, ch_h + 28)
+        char_layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
+        char_draw = ImageDraw.Draw(char_layer)
 
-        # 3D side extrusion (dark metallic depth)
-        depth_steps = 6
-        for d in range(depth_steps, 0, -1):
-            shade = 95 + d * 12
-            draw_text.text((ox - d, oy + d // 2), ch, font=font, fill=(shade, shade + 4, shade + 12, 255))
+        lx = (layer_w - cw) // 2
+        ly = (layer_h - ch_h) // 2
 
-        # Warm rim highlight
-        draw_text.text((ox + 1, oy - 1), ch, font=font, fill=(255, 245, 220, 255))
+        # Soft dark outline for clean separation
+        for ox, oy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
+            char_draw.text((lx + ox, ly + oy), ch, font=font, fill=(0, 0, 0, 255))
 
-        # Crisp front white face
-        draw_text.text((ox, oy), ch, font=font, fill=(248, 250, 252, 255))
+        # Crisp white text
+        char_draw.text((lx, ly), ch, font=font, fill=(255, 255, 255, 255))
 
-        curr_x += char_widths[idx] + spacing
+        angle = random.randint(-12, 12)
+        rotated = char_layer.rotate(angle, resample=Image.BICUBIC, expand=True)
 
-    # 5. Create soft floor reflection beneath the digits
-    reflection = text_layer.crop((0, int(floor_y - 58), width, floor_y + 4))
-    reflection = reflection.transpose(Image.FLIP_TOP_BOTTOM)
-    reflection = reflection.filter(ImageFilter.GaussianBlur(radius=2.5))
+        paste_x = int(cursor_x + (cw - rotated.width) // 2 + random.randint(-2, 2))
+        paste_y = int(center_y - rotated.height // 2 + random.randint(-4, 4))
 
-    # Fade reflection alpha
-    r_chan, g_chan, b_chan, a_chan = reflection.split()
-    a_chan = a_chan.point(lambda p: int(p * 0.26))
-    reflection = Image.merge("RGBA", (r_chan, g_chan, b_chan, a_chan))
+        paste_x = max(0, min(paste_x, width - rotated.width))
+        paste_y = max(0, min(paste_y, height - rotated.height))
 
-    scene.paste(reflection, (0, floor_y + 1), reflection)
-    scene = Image.alpha_composite(scene, text_layer)
+        image.paste(rotated, (paste_x, paste_y), rotated)
+        cursor_x += cw + spacing
 
-    final_img = scene.convert("RGB")
+    final_img = image.convert("RGB")
     buffer = io.BytesIO()
     final_img.save(buffer, format="PNG")
     buffer.seek(0)
@@ -176,7 +136,7 @@ def get_captcha():
             "expires_at": expires_at,
         }
 
-        image_base64 = generate_bokeh_3d_captcha(code)
+        image_base64 = generate_black_white_captcha(code)
 
         return jsonify({
             "captcha_id": captcha_id,
