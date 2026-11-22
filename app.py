@@ -8,16 +8,18 @@ import traceback
 import uuid
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
+# Server memory store: { captcha_id: {"code": "4792", "expires_at": 1700000000.0} }
 captcha_store = {}
-CAPTCHA_TTL_SECONDS = 120
+CAPTCHA_TTL_SECONDS = 120  # 2 minutes
 
 
 def cleanup_expired_captchas():
+    """Remove expired CAPTCHA entries from server memory."""
     now = time.time()
     expired_ids = [
         cid for cid, entry in captcha_store.items()
@@ -28,11 +30,13 @@ def cleanup_expired_captchas():
 
 
 def load_font(size):
+    """Try loading a bold TrueType font; fall back to default bitmap font."""
     candidate_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "C:/Windows/Fonts/arialbd.ttf",
         "C:/Windows/Fonts/calibrib.ttf",
+        "C:/Windows/Fonts/impact.ttf",
     ]
     for path in candidate_paths:
         if os.path.exists(path):
@@ -43,13 +47,12 @@ def load_font(size):
     return ImageFont.load_default()
 
 
-def generate_black_white_captcha(code_text, width=300, height=110):
-    """Generate a clean black background with crisp white 4-digit text."""
-    # Pure black background
+def generate_black_white_captcha(code_text, width=340, height=130):
+    """Generate a clean black background with extra-large, crisp white 4-digit text."""
     image = Image.new("RGBA", (width, height), (0, 0, 0, 255))
     draw = ImageDraw.Draw(image)
 
-    # Subtle dark-gray decorative lines and dots (low contrast so text stays crystal clear)
+    # Subtle dark-gray decorative lines and dots
     for _ in range(random.randint(3, 6)):
         x1 = random.randint(0, width - 1)
         y1 = random.randint(0, height - 1)
@@ -64,10 +67,10 @@ def generate_black_white_captcha(code_text, width=300, height=110):
         shade = random.randint(35, 75)
         draw.point((dx, dy), fill=(shade, shade, shade, 255))
 
-    # Draw clear white digits with slight tilt and spacing
-    font = load_font(56)
+    # Extra-large crisp white digits with slight tilt and spacing
+    font = load_font(76)
     char_boxes = []
-    spacing = 12
+    spacing = 14
 
     for ch in code_text:
         bbox = draw.textbbox((0, 0), ch, font=font)
@@ -80,26 +83,24 @@ def generate_black_white_captcha(code_text, width=300, height=110):
     center_y = height // 2
 
     for ch, cw, ch_h in char_boxes:
-        layer_w = max(64, cw + 28)
-        layer_h = max(72, ch_h + 28)
+        layer_w = max(84, cw + 34)
+        layer_h = max(92, ch_h + 34)
         char_layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
         char_draw = ImageDraw.Draw(char_layer)
 
         lx = (layer_w - cw) // 2
         ly = (layer_h - ch_h) // 2
 
-        # Soft dark outline for clean separation
         for ox, oy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
             char_draw.text((lx + ox, ly + oy), ch, font=font, fill=(0, 0, 0, 255))
 
-        # Crisp white text
         char_draw.text((lx, ly), ch, font=font, fill=(255, 255, 255, 255))
 
-        angle = random.randint(-12, 12)
+        angle = random.randint(-10, 10)
         rotated = char_layer.rotate(angle, resample=Image.BICUBIC, expand=True)
 
         paste_x = int(cursor_x + (cw - rotated.width) // 2 + random.randint(-2, 2))
-        paste_y = int(center_y - rotated.height // 2 + random.randint(-4, 4))
+        paste_y = int(center_y - rotated.height // 2 + random.randint(-3, 3))
 
         paste_x = max(0, min(paste_x, width - rotated.width))
         paste_y = max(0, min(paste_y, height - rotated.height))
