@@ -13,13 +13,13 @@ from PIL import Image, ImageDraw, ImageFont
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Server memory store: { captcha_id: {"code": "4792", "expires_at": 1700000000.0} }
+# Server memory store: { captcha_id: {"code": "20719", "expires_at": 1700000000.0} }
 captcha_store = {}
-CAPTCHA_TTL_SECONDS = 120  # 2 minutes
+CAPTCHA_TTL_SECONDS = 120
+CAPTCHA_DIGITS = 5
 
 
 def cleanup_expired_captchas():
-    """Remove expired CAPTCHA entries from server memory."""
     now = time.time()
     expired_ids = [
         cid for cid, entry in captcha_store.items()
@@ -30,8 +30,9 @@ def cleanup_expired_captchas():
 
 
 def load_font(size):
-    """Try loading a bold TrueType font; fall back to default bitmap font."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     candidate_paths = [
+        os.path.join(base_dir, "fonts", "DejaVuSans-Bold.ttf"),
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
         "C:/Windows/Fonts/arialbd.ttf",
@@ -44,73 +45,39 @@ def load_font(size):
                 return ImageFont.truetype(path, size=int(size))
             except OSError:
                 pass
-    return ImageFont.load_default()
+    try:
+        return ImageFont.load_default(size=int(size))
+    except TypeError:
+        return ImageFont.load_default()
 
 
-def generate_black_white_captcha(code_text, width=340, height=130):
-    """Generate a clean black background with extra-large, crisp white 4-digit text."""
-    image = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+def generate_black_white_captcha(code_text, width=420, height=140):
+    """Generate a solid black background with bold, high-contrast white digits."""
+    image = Image.new("RGB", (width, height), (0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    # Subtle dark-gray decorative lines and dots
-    for _ in range(random.randint(3, 6)):
-        x1 = random.randint(0, width - 1)
-        y1 = random.randint(0, height - 1)
-        x2 = random.randint(0, width - 1)
-        y2 = random.randint(0, height - 1)
-        shade = random.randint(25, 55)
-        draw.line([(x1, y1), (x2, y2)], fill=(shade, shade, shade, 255), width=1)
-
-    for _ in range(random.randint(20, 40)):
-        dx = random.randint(0, width - 1)
-        dy = random.randint(0, height - 1)
-        shade = random.randint(35, 75)
-        draw.point((dx, dy), fill=(shade, shade, shade, 255))
-
-    # Extra-large crisp white digits with slight tilt and spacing
-    font = load_font(76)
+    font = load_font(84)
+    spacing = 10
     char_boxes = []
-    spacing = 14
 
     for ch in code_text:
         bbox = draw.textbbox((0, 0), ch, font=font)
         cw = bbox[2] - bbox[0]
         ch_h = bbox[3] - bbox[1]
-        char_boxes.append((ch, cw, ch_h))
+        char_boxes.append((ch, cw, ch_h, bbox[0], bbox[1]))
 
     total_width = sum(item[1] for item in char_boxes) + spacing * (len(char_boxes) - 1)
-    cursor_x = max(12, (width - total_width) // 2)
+    cursor_x = max(16, (width - total_width) // 2)
     center_y = height // 2
 
-    for ch, cw, ch_h in char_boxes:
-        layer_w = max(84, cw + 34)
-        layer_h = max(92, ch_h + 34)
-        char_layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
-        char_draw = ImageDraw.Draw(char_layer)
-
-        lx = (layer_w - cw) // 2
-        ly = (layer_h - ch_h) // 2
-
-        for ox, oy in [(-2, 0), (2, 0), (0, -2), (0, 2)]:
-            char_draw.text((lx + ox, ly + oy), ch, font=font, fill=(0, 0, 0, 255))
-
-        char_draw.text((lx, ly), ch, font=font, fill=(255, 255, 255, 255))
-
-        angle = random.randint(-10, 10)
-        rotated = char_layer.rotate(angle, resample=Image.BICUBIC, expand=True)
-
-        paste_x = int(cursor_x + (cw - rotated.width) // 2 + random.randint(-2, 2))
-        paste_y = int(center_y - rotated.height // 2 + random.randint(-3, 3))
-
-        paste_x = max(0, min(paste_x, width - rotated.width))
-        paste_y = max(0, min(paste_y, height - rotated.height))
-
-        image.paste(rotated, (paste_x, paste_y), rotated)
+    for ch, cw, ch_h, off_x, off_y in char_boxes:
+        px = cursor_x - off_x
+        py = center_y - (ch_h // 2) - off_y
+        draw.text((px, py), ch, font=font, fill=(255, 255, 255))
         cursor_x += cw + spacing
 
-    final_img = image.convert("RGB")
     buffer = io.BytesIO()
-    final_img.save(buffer, format="PNG")
+    image.save(buffer, format="PNG")
     buffer.seek(0)
     return base64.b64encode(buffer.read()).decode("utf-8")
 
@@ -129,7 +96,7 @@ def get_captcha():
     try:
         cleanup_expired_captchas()
         captcha_id = str(uuid.uuid4())
-        code = "".join(random.choices(string.digits, k=4))
+        code = "".join(random.choices(string.digits, k=CAPTCHA_DIGITS))
         expires_at = time.time() + CAPTCHA_TTL_SECONDS
 
         captcha_store[captcha_id] = {
@@ -166,7 +133,7 @@ def verify_captcha():
 
         if time.time() > record["expires_at"]:
             del captcha_store[captcha_id]
-            return jsonify({"success": False, "message": "Wrong captcha"}), 400
+            return jsonify({"success": False, "message": "Captcha expired"}), 400
 
         expected_code = record["code"]
         del captcha_store[captcha_id]
@@ -182,4 +149,5 @@ def verify_captcha():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
+    app.run(host="0.0.0.0", port=port, debug=debug_mode)
